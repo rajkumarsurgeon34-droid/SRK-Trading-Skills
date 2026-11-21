@@ -92,3 +92,14 @@ python3 -m pytest
 ## Credits
 
 The idea and skill-based structure were inspired by [claude-trading-skills](https://github.com/tradermonty/claude-trading-skills) by TraderMonty (MIT License), which is built for US markets. SRK Trading Skills is a separate, India-specific implementation. See [`LICENSE`](LICENSE).
+
+## 📱 SRK Trading — Android app
+
+All 15 skills as a phone app in [`android-app/`](android-app/): market regime dashboard, live option chain, strategy builder with payoff chart, screener, sector rotation, technicals, position sizer, charges, pre-trade checklist, intraday risk guard and trade journal.
+
+- **Data:** Angel One SmartAPI (live) when you log in from Settings; otherwise free delayed data (Yahoo Finance, NSE website)
+- **Never places orders.** Analysis and discipline only
+- **Install:** open the latest release under *Releases* on your phone and install `SRK-Trading.apk`
+- Built automatically by GitHub Actions (`.github/workflows/build-apk.yml`); the app's maths is tested against the Python skills on every build
+
+Angel One setup: create a free API key at smartapi.angelone.in, then enter API key, client ID and MPIN in **Settings**. For one-tap login add your TOTP secret (shown when you enable TOTP at smartapi.angelone.in/enable-totp), or type the 6-digit code each morning.

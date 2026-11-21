@@ -1,0 +1,59 @@
+plugins {
+    id 'com.android.application'
+}
+
+def srkBuild = (System.getenv('GITHUB_RUN_NUMBER') ?: '0').toInteger()
+
+android {
+    namespace 'in.shazverse.srktrading'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'in.shazverse.srktrading'
+        minSdk 24
+        targetSdk 35
+        versionCode(100 + srkBuild)
+        versionName "1.0.${srkBuild}"
+    }
+
+    // Fixed signing key kept in the repo (signing/srk-trading.keystore) so every
+    // new build installs over the previous one without uninstalling.
+    signingConfigs {
+        srk {
+            storeFile rootProject.file('signing/srk-trading.keystore')
+            storePassword 'srktrading'
+            keyAlias 'srktrading'
+            keyPassword 'srktrading'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.srk
+        }
+        debug {
+            signingConfig signingConfigs.srk
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    androidResources {
+        noCompress 'js', 'html', 'css', 'json'
+    }
+}
+
+dependencies {
+    implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.core:core:1.13.1'
+    implementation 'androidx.webkit:webkit:1.12.1'
+}

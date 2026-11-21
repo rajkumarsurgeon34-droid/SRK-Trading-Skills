@@ -34,7 +34,7 @@ def analyze(rows, symbol=None):
     lookback = rows[-252:]
     hi52 = max(r["high"] for r in lookback)
     lo52 = min(r["low"] for r in lookback)
-    piv = pivots_cpr(rows[-2])
+    piv = pivots_cpr(rows[-1])  # levels for the next session come from the latest candle
     price = last["close"]
 
     enough_200 = len(rows) >= 200
