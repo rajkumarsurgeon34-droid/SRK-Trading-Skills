@@ -56,8 +56,8 @@ function render() {
   fn($('#screen'));
 }
 function updateBadge() {
-  const b = $('#srcBadge'); const live = D.preferAngel();
-  b.textContent = live ? '● Angel One live' : '○ Free delayed';
+  const b = $('#srcBadge'); const lb = D.liveBroker(), live = !!lb;
+  b.textContent = live ? `● ${D.BROKER_NAME[lb]} live` : '○ Free delayed';
   b.classList.toggle('live', live);
 }
 $('#srcBadge').addEventListener('click', () => openSettings());
@@ -104,7 +104,7 @@ async function Home(el) {
     const tile = (k, d) => d ? `<div class="tile"><div class="k">${k}</div><div class="v">${num(d.close ?? d.value, 2)}</div><div class="small ${cls(d.chgPct)}">${sgn(d.chgPct)}%</div></div>` : '';
     el.innerHTML = `
       <div class="card">
-        <div class="between"><h3>Market regime <small>${esc(N.rows.at(-1).date)} · ${esc(live ? 'Angel One live' : N.source)}</small></h3>
+        <div class="between"><h3>Market regime <small>${esc(N.rows.at(-1).date)} · ${esc(live && Object.keys(live).length ? D.BROKER_NAME[D.liveBroker()] + ' live' : N.source)}</small></h3>
           <button class="btn sm sec" id="refresh">↻</button></div>
         <div class="between"><span class="big">${R.score}<span class="mut small">/100</span></span><span class="pill ${pillFor(R.posture)}">${R.posture.replace('_', ' ').toUpperCase()}</span></div>
         <div class="gauge"><i style="left:calc(${R.score}% - 2px)"></i></div>
@@ -160,7 +160,7 @@ async function Chain(el) {
     const sym = ($('#cSym').value === '_' ? val('cStock') : $('#cSym').value).trim().toUpperCase();
     if (!sym) return toast('Enter a stock symbol');
     store.set('chainPrefs', { symbol: sym });
-    $('#cOut').innerHTML = `<div class="card">${spin} Loading ${esc(sym)} option chain…${D.preferAngel() ? '<div class="small mut">First load of the day downloads Angel One’s instrument list (may take ~30 s).</div>' : ''}</div>`;
+    $('#cOut').innerHTML = `<div class="card">${spin} Loading ${esc(sym)} option chain…${D.liveBroker() ? `<div class="small mut">First load of the day downloads ${D.BROKER_NAME[D.liveBroker()]}’s instrument list (may take ~30 s).</div>` : ''}</div>`;
     try {
       const ch = await D.optionChain(sym, val('cExp') || null);
       if (!ch.rows.length) throw new Error('No option data returned');
@@ -187,7 +187,7 @@ async function Chain(el) {
         </table><div class="small mut" style="margin-top:6px">OI shows where option writers are positioned — not a guaranteed level.</div></div>`;
       $('#toStrat').onclick = () => go('options', 'strategy');
     } catch (e) {
-      $('#cOut').innerHTML = errBox(e) + `<div class="card small mut">If the free NSE source is blocked, log in to Angel One in Settings for live option chains.</div>`;
+      $('#cOut').innerHTML = errBox(e) + `<div class="card small mut">If the free NSE source is blocked, log in to Angel One or HDFC Securities in Settings for live option chains.</div>`;
     }
   };
   $('#cLoad').onclick = load;
@@ -470,19 +470,29 @@ function sheet(title, html, mount) {
   document.body.appendChild(s); $('[data-close]', s).onclick = () => s.remove(); if (mount) mount(s); return s;
 }
 function openSettings() {
-  const st = settings(), a = store.get('angel', {}), R = { ...S.DEFAULT_RULES, ...st.rules };
-  const logged = D.angelLoggedIn();
+  const st = settings(), a = store.get('angel', {}), h = store.get('hdfc', {}), R = { ...S.DEFAULT_RULES, ...st.rules };
   sheet('Settings', `
-    <div class="card"><h3>Angel One SmartAPI <small>${logged ? '<span class="up">● logged in today</span>' : 'not logged in'}</small></h3>
-      <div class="small mut">Create an API key at smartapi.angelone.in (free). Your details stay on this phone and are sent only to Angel One.</div>
+    <div class="card"><h3>Live data broker</h3>
+      <select id="brk"><option value="angel">Angel One (SmartAPI)</option><option value="hdfc">HDFC Securities (InvestRight API)</option></select>
+      <label>When not logged in</label><select id="dSrc"><option value="auto">Use free delayed data</option><option value="free">Always use free delayed data</option></select>
+      <div class="small mut" style="margin-top:6px">Your keys stay on this phone and go only to your broker. The app never places orders.</div></div>
+    <div class="card" id="cardAngel"><h3>Angel One SmartAPI <small>${D.angelLoggedIn() ? '<span class="up">● logged in today</span>' : 'not logged in'}</small></h3>
+      <div class="small mut">Create a free API key at smartapi.angelone.in.</div>
       <label>API key</label><input id="aKey" value="${esc(a.apiKey || '')}" autocomplete="off">
       <label>Client ID</label><input id="aCli" value="${esc(a.clientCode || '')}" autocomplete="off">
       <label>MPIN</label><input id="aPin" type="password" inputmode="numeric" value="${esc(a.pin || '')}" autocomplete="off">
       <label>TOTP secret <span class="mut">(optional — enables one-tap login)</span></label><input id="aTotp" type="password" value="${esc(a.totpSecret || '')}" autocomplete="off">
       <label>…or 6-digit TOTP code now</label><input id="aCode" inputmode="numeric" maxlength="6" placeholder="from your authenticator app">
-      <div class="row"><button class="btn" id="aLogin">Save & log in</button>${logged ? '<button class="btn red" id="aOut">Log out</button>' : ''}</div>
+      <div class="row"><button class="btn" id="aLogin">Save & log in</button>${D.angelLoggedIn() ? '<button class="btn red" id="aOut">Log out</button>' : ''}</div>
       <div id="aMsg" class="small" style="margin-top:6px"></div></div>
-    <div class="card"><h3>Data source</h3><select id="dSrc"><option value="auto">Angel One when logged in, else free data</option><option value="free">Free delayed data only</option></select></div>
+    <div class="card" id="cardHdfc"><h3>HDFC Securities <small>${D.hdfcLoggedIn() ? '<span class="up">● logged in today</span>' : 'not logged in'}</small></h3>
+      <div class="small mut">One-time setup: open developer.hdfcsec.com → Login with InvestRight + OTP → accept the disclaimer → <b>Create App</b>. Use the redirect URL below exactly, then copy the API key and secret here.</div>
+      <label>Redirect URL (enter this when creating the app)</label><div class="row"><input id="hRed" value="${esc(h.redirect || D.HDFC_DEFAULT_REDIRECT)}" autocomplete="off"><button class="btn sm sec" id="hCopy">Copy</button></div>
+      <label>API key</label><input id="hKey" value="${esc(h.apiKey || '')}" autocomplete="off">
+      <label>API secret</label><input id="hSec" type="password" value="${esc(h.apiSecret || '')}" autocomplete="off">
+      <div class="row"><button class="btn" id="hLogin">Save & log in</button>${D.hdfcLoggedIn() ? '<button class="btn red" id="hOut">Log out</button>' : ''}</div>
+      <div id="hMsg" class="small" style="margin-top:6px"></div>
+      <div class="small mut" style="margin-top:6px">HDFC gives live prices and option open interest, but no historical candles — charts and indicators use Yahoo daily data plus HDFC’s live price.</div></div>
     <div class="card"><h3>Trading</h3><div class="grid2"><div><label>Capital ₹</label><input id="tCap" type="number" value="${st.capital}"></div><div><label>Default risk %</label><input id="tRisk" type="number" step="0.1" value="${st.riskPct}"></div><div><label>Brokerage / order ₹</label><input id="tBrk" type="number" value="${st.brokerage}"></div></div></div>
     <div class="card"><h3>Risk-guard rules</h3><div class="grid2">
       ${[['max_daily_loss_pct', 'Max daily loss %'], ['max_trades_per_day', 'Max trades / day'], ['max_consecutive_losses', 'Stop after losses in a row'], ['profit_lock_pct', 'Profit lock after %'], ['weekly_dd_stop_pct', 'Weekly drawdown stop %'], ['monthly_dd_stop_pct', 'Monthly drawdown stop %']]
@@ -493,9 +503,22 @@ function openSettings() {
     <button class="btn" id="sSave">Save settings</button>
     <div class="disc">SRK Trading ${D.isNative() ? 'v' + esc(window.SRKNative.version()) : ''} · by Dr. M. Rajkumar · ShazVerse Technologies<br>Rules as of ${CONFIG.as_of}: NIFTY lot ${CONFIG.lot_sizes.NIFTY}, BANKNIFTY lot ${CONFIG.lot_sizes.BANKNIFTY}.<br>Educational decision-support only — not SEBI-registered investment advice. The app never places orders.</div>`, (s) => {
     $('#dSrc', s).value = st.dataSource || 'auto';
+    $('#brk', s).value = st.broker || 'angel';
+    const showBroker = () => { $('#cardAngel', s).style.display = val('brk') === 'angel' ? 'block' : 'none'; $('#cardHdfc', s).style.display = val('brk') === 'hdfc' ? 'block' : 'none'; };
+    $('#brk', s).onchange = () => { saveSettings({ broker: val('brk') }); D.clearCache(); showBroker(); updateBadge(); };
+    showBroker();
     const saveAngel = () => store.set('angel', { apiKey: val('aKey').trim(), clientCode: val('aCli').trim().toUpperCase(), pin: val('aPin').trim(), totpSecret: val('aTotp').trim() });
+    const saveHdfc = () => store.set('hdfc', { apiKey: val('hKey').trim(), apiSecret: val('hSec').trim(), redirect: val('hRed').trim() });
+    $('#hCopy', s).onclick = () => { navigator.clipboard?.writeText(val('hRed')).then(() => toast('Redirect URL copied'), () => toast('Long-press the box to copy')); };
+    $('#hLogin', s).onclick = async () => {
+      saveHdfc(); saveSettings({ broker: 'hdfc' }); $('#hMsg', s).innerHTML = spin + ' Opening HDFC login…';
+      try { await D.hdfcLogin(); D.clearCache(); $('#hMsg', s).innerHTML = '<span class="up">Logged in ✓ — live data on</span>'; updateBadge(); }
+      catch (e) { $('#hMsg', s).innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+    };
+    const hOut = $('#hOut', s); if (hOut) hOut.onclick = () => { D.hdfcLogout(); updateBadge(); s.remove(); openSettings(); };
     $('#aLogin', s).onclick = async () => {
       saveAngel(); $('#aMsg', s).innerHTML = spin + ' Logging in…';
+      saveSettings({ broker: 'angel' });
       try { await D.angelLogin({ totpCode: val('aCode').trim() }); D.clearCache(); $('#aMsg', s).innerHTML = '<span class="up">Logged in ✓ — live data on</span>'; updateBadge(); }
       catch (e) { $('#aMsg', s).innerHTML = `<span class="err">${esc(e.message)}</span>`; }
     };
@@ -505,9 +528,9 @@ function openSettings() {
       $('#rGo', b).onclick = () => { try { store.importAll(JSON.parse(val('rTxt'))); toast('Restored'); b.remove(); s.remove(); render(); } catch { toast('Not a valid backup'); } };
     });
     $('#sSave', s).onclick = () => {
-      saveAngel();
+      saveAngel(); saveHdfc();
       const rules = {}; $$('[data-rule]', s).forEach((i) => { rules[i.dataset.rule] = i.type === 'time' ? i.value : +i.value; });
-      saveSettings({ dataSource: val('dSrc'), capital: nval('tCap') || 200000, riskPct: nval('tRisk') || 1, brokerage: nval('tBrk') ?? 20, rules,
+      saveSettings({ broker: val('brk'), dataSource: val('dSrc'), capital: nval('tCap') || 200000, riskPct: nval('tRisk') || 1, brokerage: nval('tBrk') ?? 20, rules,
         watchlist: val('wList').split(/[\s,]+/).map((x) => x.trim().toUpperCase()).filter(Boolean) });
       D.clearCache(); toast('Settings saved'); s.remove(); render();
     };
@@ -518,7 +541,7 @@ function openSettings() {
 if (!store.get('acceptedDisclaimer')) {
   sheet('Welcome to SRK Trading', `<div class="card"><p><b>SRK Trading</b> brings the SRK Trading Skills to your phone: market regime, option chain, strategies, position sizing, charges, risk guard and journal — for NSE/BSE.</p>
     <p class="small">It is an <b>analysis and discipline tool</b>. It never places orders. It is <b>not SEBI-registered investment advice</b>. F&O trading carries a high risk of loss — SEBI studies show most individual F&O traders lose money.</p>
-    <p class="small">For live data, add your Angel One SmartAPI key in Settings. Without it, free delayed data is used.</p></div><button class="btn" id="ok">I understand</button>`, (s) => {
+    <p class="small">For live data, connect Angel One or HDFC Securities in Settings. Without a broker, free delayed data is used.</p></div><button class="btn" id="ok">I understand</button>`, (s) => {
     $('[data-close]', s).style.display = 'none';
     $('#ok', s).onclick = () => { store.set('acceptedDisclaimer', true); s.remove(); };
   });

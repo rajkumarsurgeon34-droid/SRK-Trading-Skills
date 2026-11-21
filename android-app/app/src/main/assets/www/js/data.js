@@ -3,12 +3,24 @@
 // delayed data (Yahoo Finance for prices, NSE website for option chain / FII-DII).
 import { addDays, CONFIG, iso, todayIST } from './core.js';
 import { store } from './store.js';
+import { b64ToBytes, decodeFrame, PACKET_EXCHANGE } from './pb.js';
 
 // ─── HTTP via the native bridge (no CORS limits); falls back to fetch in a browser ──
 let seq = 0;
 const pending = new Map();
 window.__srkHttp = (id, res) => { const p = pending.get(id); if (p) { pending.delete(id); p(res); } };
 window.__srkScrip = (id, res) => { const p = pending.get(id); if (p) { pending.delete(id); p(res); } };
+window.__srkLogin = (id, res) => { const p = pending.get(id); if (p) { pending.delete(id); p(res); } };
+window.__srkWs = (id, res) => { const p = pending.get(id); if (p) { pending.delete(id); p(res); } };
+function nativeCall(fn, timeout, ...args) {
+  if (!isNative()) return Promise.reject(new Error('This needs the Android app'));
+  const id = fn[0] + (++seq);
+  return new Promise((resolve, reject) => {
+    const t = timeout ? setTimeout(() => { pending.delete(id); reject(new Error('Timed out')); }, timeout) : null;
+    pending.set(id, (r) => { if (t) clearTimeout(t); r && r.error && !r.frames ? reject(new Error(r.error)) : resolve(r); });
+    window.SRKNative[fn](id, ...args);
+  });
+}
 export const isNative = () => typeof window.SRKNative !== 'undefined';
 
 export async function http(method, url, { headers = {}, body = null, timeout = 35000 } = {}) {
@@ -171,6 +183,141 @@ async function angelOptionChain(symbol, expiryISO, spot, strikesEachSide = 15) {
     lot: +forExp[0]?.lotsize || null };
 }
 
+// ═══ HDFC Securities (InvestRight Individual API) ═══════════════════════════
+// Login: HDFC's own page (with OTP) inside the app → request token → access token.
+// Data: /fetch-ltp (LTP + previous close) and the WebSocket feed (OHLC, OI).
+// HDFC publishes NO historical candles, so charts/indicators use Yahoo daily data.
+const HDFC = 'https://developer.hdfcsec.com';
+const HDFC_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
+export const HDFC_INDEX = { NIFTY: '26000', BANKNIFTY: '26009', INDIAVIX: '26017', FINNIFTY: '26037', MIDCPNIFTY: '26074' };
+export const HDFC_DEFAULT_REDIRECT = 'https://shazverse.com/srk-trading/callback';
+
+export function hdfcLoggedIn() {
+  const s = store.get('hdfcSession', null);
+  return !!(s && s.token && s.day === iso(todayIST()));
+}
+export function hdfcLogout() { store.remove('hdfcSession'); clearCache(); }
+export async function hdfcLogin() {
+  const c = store.get('hdfc', {});
+  if (!c.apiKey || !c.apiSecret) throw new Error('Enter HDFC API key and API secret in Settings');
+  const redirect = (c.redirect || HDFC_DEFAULT_REDIRECT).trim();
+  const r = await nativeCall('brokerLogin', 0, `${HDFC}/oapi/v1/login?api_key=${encodeURIComponent(c.apiKey)}`, redirect);
+  const p = r.params || {};
+  const reqToken = p.request_token || p.requestToken || p['request-token'] || p.code || p.token;
+  if (!reqToken) throw new Error('HDFC did not return a request token' + (Object.keys(p).length ? ` (got: ${Object.keys(p).join(', ')})` : ''));
+  const res = await http('POST', `${HDFC}/oapi/v1/access-token?api_key=${encodeURIComponent(c.apiKey)}&request_token=${encodeURIComponent(reqToken)}`,
+    { headers: { 'User-Agent': HDFC_UA, 'Content-Type': 'application/json', Accept: 'application/json' }, body: { apiSecret: c.apiSecret } });
+  let j; try { j = JSON.parse(res.text); } catch { throw new Error(`HDFC token exchange failed (HTTP ${res.status})`); }
+  const token = j.accessToken || j.access_token || j.data?.accessToken || j.data?.access_token;
+  if (!token) throw new Error(j.message || j.error || 'HDFC token exchange failed');
+  store.set('hdfcSession', { token, day: iso(todayIST()) });
+  return true;
+}
+function hdfcHeaders(json = false) {
+  const h = { Authorization: store.get('hdfcSession', {}).token || '', 'User-Agent': HDFC_UA, Accept: 'application/json' };
+  if (json) h['Content-Type'] = 'application/json';
+  return h;
+}
+const hdfcKey = () => encodeURIComponent(store.get('hdfc', {}).apiKey || '');
+
+/** LTP + previous close for [{exchange, token}] (exchange: NSE, NFO, BSE, BFO, NSE_INDEX, BSE_INDEX). */
+export async function hdfcLtp(instruments) {
+  const out = new Map();
+  for (let i = 0; i < instruments.length; i += 100) {
+    const batch = instruments.slice(i, i + 100);
+    const r = await http('PUT', `${HDFC}/oapi/v1/fetch-ltp?api_key=${hdfcKey()}`, { headers: hdfcHeaders(true), body: { data: batch } });
+    if (r.status === 401 || r.status === 403) { hdfcLogout(); throw new Error('HDFC session expired — log in again in Settings'); }
+    let j; try { j = JSON.parse(r.text); } catch { throw new Error(`HDFC LTP failed (HTTP ${r.status})`); }
+    if (r.status >= 400) throw new Error(j.message || `HDFC LTP failed (HTTP ${r.status})`);
+    const asked = new Map(batch.map((b) => [String(b.token), b.exchange]));
+    for (const row of j.data || []) {
+      const tok = String(row.token), ex = String(row.exchange || asked.get(tok) || '').toUpperCase();
+      out.set(`${ex}:${tok}`, { ltp: +row.ltp || 0, prevClose: +row.prev_close || 0 });
+    }
+  }
+  return out;
+}
+const WS_PREFIX = { NSE: 'NSE', BSE: 'BSE', NFO: 'NFO', BFO: 'BFO', NSE_INDEX: 'NSE_INDEX', BSE_INDEX: 'BSE_INDEX' };
+/** Short live-feed snapshot: [{exchange, token}] → Map "EX:token" → {ltp, open, high, low, close, volume, oi}. */
+export async function hdfcFeedSnapshot(instruments, waitMs = 4000) {
+  const token = store.get('hdfcSession', {}).token;
+  const url = `${HDFC.replace('https://', 'wss://')}/wsapi/v1/session?token=${encodeURIComponent(token)}&api_key=${hdfcKey()}`;
+  const frames = [];
+  for (let i = 0; i < instruments.length; i += 100) {
+    frames.push(JSON.stringify({ subscribe: instruments.slice(i, i + 100).map((x) => ({ scripId: `${WS_PREFIX[x.exchange]}_${x.token}`, type: 'ALL' })) }));
+  }
+  frames.push(JSON.stringify({ heart_beat: true }));
+  const r = await nativeCall('wsSnapshot', waitMs + 25000, url, JSON.stringify({ 'User-Agent': HDFC_UA }), JSON.stringify(frames), waitMs);
+  const out = new Map();
+  for (const b64 of r.frames || []) {
+    for (const p of decodeFrame(b64ToBytes(b64))) {
+      if (!p.instrumentId || p.packetType === 16) continue;
+      const ex = PACKET_EXCHANGE[p.packetType]; if (!ex) continue;
+      const key = `${ex}:${p.instrumentId}`, cur = out.get(key) || {};
+      if (p.index) Object.assign(cur, { ltp: p.index.ltp, open: p.index.open, high: p.index.high, low: p.index.low, close: p.index.close });
+      if (p.mbp) {
+        if (p.mbp.ltp) Object.assign(cur, { ltp: p.mbp.ltp, open: p.mbp.open, high: p.mbp.high, low: p.mbp.low, close: p.mbp.close, volume: p.mbp.volume });
+        if (p.mbp.oi) cur.oi = p.mbp.oi;
+      }
+      out.set(key, cur);
+    }
+  }
+  if (!out.size && r.error) throw new Error('HDFC live feed: ' + r.error);
+  return out;
+}
+async function hdfcMaster(filter) {
+  const r = await nativeCall('hdfcMasterSearch', 180000, JSON.stringify(filter));
+  return r.items || [];
+}
+async function hdfcFindEquity(symbol) {
+  const known = store.get('hdfcTokens', {});
+  if (known[symbol]) return known[symbol];
+  const rows = (await hdfcMaster({ exchange: 'NSE', instrument_segment: 'EQUITY', symbol_name: symbol.toUpperCase() }))
+    .filter((r) => /^\d+$/.test(r.exch_security_id));
+  if (!rows.length) throw new Error(`${symbol} not found in HDFC security master`);
+  const best = rows.find((r) => /EQ/i.test(r.security_id)) || rows[0];
+  known[symbol] = best.exch_security_id; store.set('hdfcTokens', known);
+  return best.exch_security_id;
+}
+async function hdfcSpot(sym) {
+  const inst = HDFC_INDEX[sym] ? { exchange: 'NSE_INDEX', token: HDFC_INDEX[sym] } : { exchange: 'NSE', token: await hdfcFindEquity(sym) };
+  const m = await hdfcLtp([inst]);
+  return m.get(`${inst.exchange}:${inst.token}`)?.ltp || null;
+}
+async function hdfcOptionChain(symbol, expiryISO, spot, each = 15) {
+  const index = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'NIFTYNXT50'].includes(symbol);
+  const rows = await cached('hdfcopt:' + symbol, 6 * 3600000, () =>
+    hdfcMaster({ exchange: 'NSE', instrument_segment: index ? 'OPTIDX' : 'OPTSTK', symbol_name: symbol }));
+  if (!rows.length) throw new Error(`No ${symbol} options in HDFC security master`);
+  const expiries = [...new Set(rows.map((r) => r.expiry_date).filter(Boolean))].sort();
+  const exp = expiryISO && expiries.includes(expiryISO) ? expiryISO : expiries.find((e) => e >= iso(todayIST())) || expiries[0];
+  const forExp = rows.filter((r) => r.expiry_date === exp && /^\d+$/.test(r.exch_security_id));
+  const strikes = [...new Set(forExp.map((r) => +r.strike_price))].sort((a, b) => a - b);
+  if (!spot) spot = await hdfcSpot(symbol);
+  let iAtm = 0; strikes.forEach((k, i) => { if (Math.abs(k - spot) < Math.abs(strikes[iAtm] - spot)) iAtm = i; });
+  const pick = new Set(strikes.slice(Math.max(0, iAtm - each), iAtm + each + 1));
+  const sel = forExp.filter((r) => pick.has(+r.strike_price));
+  const inst = sel.map((r) => ({ exchange: 'NFO', token: r.exch_security_id }));
+  const [ltp, feed] = await Promise.all([hdfcLtp(inst), hdfcFeedSnapshot(inst, 4500).catch(() => new Map())]);
+  const snapKey = `oiSnap:hdfc:${symbol}:${exp}:${iso(todayIST())}`;
+  const snap = store.get(snapKey, null), newSnap = snap || {};
+  const by = new Map();
+  for (const r of sel) {
+    const k = +r.strike_price, key = `NFO:${r.exch_security_id}`, q = ltp.get(key) || {}, f = feed.get(key) || {};
+    const row = by.get(k) || { strike: k, ceOi: 0, ceChgOi: 0, ceLtp: 0, ceChg: 0, ceIv: null, peOi: 0, peChgOi: 0, peLtp: 0, peChg: 0, peIv: null };
+    const side = String(r.option_type).toUpperCase() === 'CE' ? 'ce' : 'pe';
+    const oi = +f.oi || 0, last = q.ltp || f.ltp || 0;
+    row[side + 'Oi'] = oi; row[side + 'Ltp'] = last; row[side + 'Chg'] = q.prevClose ? last - q.prevClose : 0;
+    if (snap && snap[r.exch_security_id] !== undefined && oi) row[side + 'ChgOi'] = oi - snap[r.exch_security_id];
+    if (!snap && oi) newSnap[r.exch_security_id] = oi;
+    by.set(k, row);
+  }
+  const gotOi = [...by.values()].some((r) => r.ceOi || r.peOi);
+  if (!snap && gotOi) store.set(snapKey, newSnap);
+  return { rows: [...by.values()], spot, expiry: exp, expiries, source: 'HDFC Securities (live)', lot: +forExp[0]?.lot_size || null,
+    note: !gotOi ? 'Open interest not received from the live feed — prices only' : snap ? 'Change in OI = since your first check today' : 'First check today — change in OI will show from your next refresh' };
+}
+
 // ═══ Yahoo Finance (free, delayed) ══════════════════════════════════════════
 const YAHOO_UA = { 'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Mobile Safari/537.36', Accept: 'application/json' };
 export async function yahooCandles(ticker, range = '2y', interval = '1d') {
@@ -252,10 +399,17 @@ export const SECTORS = {
 };
 export const GLOBAL = { sp500: '^GSPC', nasdaq: '^IXIC', dow: '^DJI', eurostoxx: '^STOXX50E', brent: 'BZ=F', usdinr: 'INR=X', dxy: 'DX-Y.NYB' };
 
-export function preferAngel() {
-  const pref = store.get('settings', {}).dataSource || 'auto';
-  return pref !== 'free' && angelLoggedIn();
+/** Which broker supplies live data right now: 'angel' | 'hdfc' | null. */
+export function liveBroker() {
+  const s = store.get('settings', {});
+  if ((s.dataSource || 'auto') === 'free') return null;
+  const b = s.broker || 'angel';
+  if (b === 'angel' && angelLoggedIn()) return 'angel';
+  if (b === 'hdfc' && hdfcLoggedIn()) return 'hdfc';
+  return null;
 }
+export const preferAngel = () => liveBroker() === 'angel';
+export const BROKER_NAME = { angel: 'Angel One', hdfc: 'HDFC Securities' };
 
 /** Daily candles for an index (NIFTY/BANKNIFTY/INDIAVIX/…) or an NSE stock symbol. */
 export async function candles(symbol, { days = 400 } = {}) {
@@ -274,7 +428,18 @@ export async function candles(symbol, { days = 400 } = {}) {
 
 /** Live last price for indices when Angel is on — patches today's candle. */
 export async function liveIndexQuotes() {
-  if (!preferAngel()) return null;
+  const b = liveBroker();
+  if (b === 'hdfc') {
+    const inst = ['NIFTY', 'BANKNIFTY', 'INDIAVIX'].map((n) => ({ exchange: 'NSE_INDEX', token: HDFC_INDEX[n] }));
+    const [l, f] = await Promise.all([hdfcLtp(inst), hdfcFeedSnapshot(inst, 3000).catch(() => new Map())]);
+    const out = {};
+    ['NIFTY', 'BANKNIFTY', 'INDIAVIX'].forEach((n) => {
+      const key = `NSE_INDEX:${HDFC_INDEX[n]}`, q = l.get(key), fd = f.get(key) || {};
+      if (q?.ltp || fd.ltp) out[n] = { ltp: q?.ltp || fd.ltp, open: fd.open, high: fd.high, low: fd.low };
+    });
+    return out;
+  }
+  if (b !== 'angel') return null;
   const q = await angelQuote({ NSE: Object.values(ANGEL_INDEX) });
   const out = {};
   for (const [name, tok] of Object.entries(ANGEL_INDEX)) { const r = q.find((x) => String(x.symbolToken) === tok); if (r) out[name] = r; }
@@ -283,6 +448,9 @@ export async function liveIndexQuotes() {
 
 export async function optionChain(symbol, expiryISO = null, spot = null) {
   const sym = symbol.toUpperCase();
+  if (liveBroker() === 'hdfc') {
+    try { return await hdfcOptionChain(sym, expiryISO, spot); } catch (e) { console.warn('HDFC chain failed, trying NSE', e); }
+  }
   if (preferAngel()) {
     try {
       let s = spot;

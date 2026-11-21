@@ -97,9 +97,11 @@ The idea and skill-based structure were inspired by [claude-trading-skills](http
 
 All 15 skills as a phone app in [`android-app/`](android-app/): market regime dashboard, live option chain, strategy builder with payoff chart, screener, sector rotation, technicals, position sizer, charges, pre-trade checklist, intraday risk guard and trade journal.
 
-- **Data:** Angel One SmartAPI (live) when you log in from Settings; otherwise free delayed data (Yahoo Finance, NSE website)
+- **Data:** live from **Angel One** (SmartAPI) or **HDFC Securities** (InvestRight API) — pick in Settings; otherwise free delayed data (Yahoo Finance, NSE website). HDFC offers no historical candles, so charts use Yahoo daily data plus HDFC live prices
 - **Never places orders.** Analysis and discipline only
 - **Install:** open the latest release under *Releases* on your phone and install `SRK-Trading.apk`
 - Built automatically by GitHub Actions (`.github/workflows/build-apk.yml`); the app's maths is tested against the Python skills on every build
 
 Angel One setup: create a free API key at smartapi.angelone.in, then enter API key, client ID and MPIN in **Settings**. For one-tap login add your TOTP secret (shown when you enable TOTP at smartapi.angelone.in/enable-totp), or type the 6-digit code each morning.
+
+HDFC Securities setup: open developer.hdfcsec.com → log in with your InvestRight ID + OTP → accept the derivatives disclaimer → **Create App** with redirect URL `https://shazverse.com/srk-trading/callback` (or whatever you type in the app's Settings — they must match). Copy the API key and secret into **Settings → HDFC Securities**, then tap **Save & log in** and sign in on HDFC's own page (once per day).

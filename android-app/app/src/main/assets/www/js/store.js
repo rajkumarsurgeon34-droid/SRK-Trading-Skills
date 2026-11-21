@@ -19,9 +19,9 @@ export const store = {
     const out = {}; const s = ls(); if (!s) return out;
     for (let i = 0; i < s.length; i++) {
       const k = s.key(i);
-      if (k.startsWith(PREFIX) && !['srk.angel', 'srk.angelSession'].includes(k)) out[k.slice(PREFIX.length)] = JSON.parse(s.getItem(k));
+      if (k.startsWith(PREFIX) && !['srk.angel', 'srk.angelSession', 'srk.hdfc', 'srk.hdfcSession'].includes(k)) out[k.slice(PREFIX.length)] = JSON.parse(s.getItem(k));
     }
     return out;
   },
-  importAll(obj) { Object.entries(obj || {}).forEach(([k, v]) => { if (!['angel', 'angelSession'].includes(k)) this.set(k, v); }); },
+  importAll(obj) { Object.entries(obj || {}).forEach(([k, v]) => { if (!['angel', 'angelSession', 'hdfc', 'hdfcSession'].includes(k)) this.set(k, v); }); },
 };

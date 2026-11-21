@@ -63,3 +63,16 @@ test('INR formatting', () => {
   assert.equal(core.inr(1234567.8, 2), '₹12,34,567.80');
   assert.equal(core.inr(-950), '-₹950');
 });
+test('HDFC feed decoder reads index and option packets', async () => {
+  const pb = await import(new URL('pb.js', W));
+  const frame = pb.encodeForTest([
+    { instrumentId: 26000, packetType: 2, index: { name: 'NIFTY 50', ltp: 26012.5, high: 26050, low: 25930, open: 25960, close: 25980 } },
+    { instrumentId: 4523311, packetType: 3, mbp: { ltp: 112.35, open: 98, high: 120, low: 95, close: 101, volume: 1234567, oi: 8765400 } },
+  ]);
+  const p = pb.decodeFrame(frame);
+  assert.equal(p.length, 2);
+  assert.equal(p[0].instrumentId, 26000); assert.equal(pb.PACKET_EXCHANGE[p[0].packetType], 'NSE_INDEX');
+  close(p[0].index.ltp, 26012.5, 1e-9, 'index ltp'); assert.equal(p[0].index.name, 'NIFTY 50');
+  assert.equal(p[1].mbp.oi, 8765400); close(p[1].mbp.ltp, 112.35, 1e-9, 'opt ltp'); assert.equal(p[1].mbp.volume, 1234567);
+  assert.equal(pb.PACKET_EXCHANGE[p[1].packetType], 'NFO');
+});
