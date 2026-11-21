@@ -1,0 +1,74 @@
+{
+  "_comment": "SRK Trading Skills — Indian market (NSE/BSE) reference data. Edit THIS file, then run `python3 scripts/sync_india_common.py` to copy it into every India skill. Exchange rules change often: re-check lot sizes, charges and holidays against NSE circulars and your broker's contract note.",
+  "as_of": "2026-11-21",
+  "lot_sizes": {
+    "NIFTY": 65,
+    "BANKNIFTY": 30,
+    "FINNIFTY": 60,
+    "MIDCPNIFTY": 120,
+    "NIFTYNXT50": 25,
+    "SENSEX": 20
+  },
+  "expiry_rules": {
+    "NIFTY":      {"exchange": "NSE", "weekly": "TUE", "monthly": "LAST_TUE"},
+    "BANKNIFTY":  {"exchange": "NSE", "weekly": null,  "monthly": "LAST_TUE"},
+    "FINNIFTY":   {"exchange": "NSE", "weekly": null,  "monthly": "LAST_TUE"},
+    "MIDCPNIFTY": {"exchange": "NSE", "weekly": null,  "monthly": "LAST_TUE"},
+    "NIFTYNXT50": {"exchange": "NSE", "weekly": null,  "monthly": "LAST_TUE"},
+    "SENSEX":     {"exchange": "BSE", "weekly": "THU", "monthly": "LAST_THU"}
+  },
+  "holiday_shift_rule": "If an expiry day is a trading holiday, the contract expires on the previous trading day.",
+  "market_hours": {"pre_open": "09:00", "open": "09:15", "close": "15:30"},
+  "holidays": {
+    "2026": [
+      "2026-01-15", "2026-01-26", "2026-03-03", "2026-03-26", "2026-03-31",
+      "2026-04-03", "2026-04-14", "2026-05-01", "2026-05-28", "2026-06-26",
+      "2026-09-14", "2026-10-02", "2026-10-20", "2026-11-10", "2026-11-24",
+      "2026-12-25"
+    ]
+  },
+  "charges": {
+    "_note": "Rates as fractions of turnover. STT revised by Finance Act 2026 w.e.f. 1 Apr 2026. Exchange/stamp/brokerage: verify with your broker.",
+    "brokerage_per_order": 20.0,
+    "brokerage_pct_cap": 0.0025,
+    "gst_pct": 0.18,
+    "sebi_fee_pct": 0.000001,
+    "segments": {
+      "options": {
+        "stt_sell_pct": 0.0015,
+        "stt_exercise_pct": 0.0015,
+        "exchange_txn_pct": 0.0003503,
+        "stamp_buy_pct": 0.00003
+      },
+      "futures": {
+        "stt_sell_pct": 0.0005,
+        "exchange_txn_pct": 0.0000173,
+        "stamp_buy_pct": 0.00002
+      },
+      "equity_intraday": {
+        "stt_sell_pct": 0.00025,
+        "exchange_txn_pct": 0.0000297,
+        "stamp_buy_pct": 0.00003
+      },
+      "equity_delivery": {
+        "stt_buy_pct": 0.001,
+        "stt_sell_pct": 0.001,
+        "exchange_txn_pct": 0.0000297,
+        "stamp_buy_pct": 0.00015,
+        "brokerage_per_order": 0.0
+      }
+    }
+  },
+  "yahoo_symbols": {
+    "NIFTY": "^NSEI",
+    "BANKNIFTY": "^NSEBANK",
+    "INDIAVIX": "^INDIAVIX",
+    "SP500": "^GSPC",
+    "NASDAQ": "^IXIC",
+    "DOW": "^DJI",
+    "EUROSTOXX50": "^STOXX50E",
+    "BRENT": "BZ=F",
+    "USDINR": "INR=X",
+    "DXY": "DX-Y.NYB"
+  }
+}

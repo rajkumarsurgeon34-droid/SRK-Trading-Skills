@@ -1,0 +1,14 @@
+[project]
+name = "srk-trading-skills"
+version = "1.0.0"
+description = "SRK Trading Skills — Claude skills for the Indian stock market (NSE/BSE)"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+
+[project.optional-dependencies]
+data = ["yfinance>=0.2", "requests>=2.31"]
+dev = ["pytest>=7"]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+testpaths = ["skills"]
